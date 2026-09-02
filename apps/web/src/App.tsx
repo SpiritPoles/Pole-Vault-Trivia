@@ -1,30 +1,32 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { usePoolState } from "./hooks/usePoolState";
-import { JoinScreen } from "./screens/JoinScreen";
+import { LandingScreen } from "./screens/LandingScreen";
+import { OpenPoolsScreen } from "./screens/OpenPoolsScreen";
 import { LobbyScreen } from "./screens/LobbyScreen";
 import { QuestionScreen } from "./screens/QuestionScreen";
 import { LeaderboardScreen } from "./screens/LeaderboardScreen";
+import { createSoloSession, pickNextQuestionId } from "./lib/poolActions";
 import { ROUND_DURATION_SECONDS, SESSION_STORAGE_KEY } from "./constants";
 import type { Session } from "./types";
 
-async function pickNextQuestionId(excludeIds: string[]): Promise<string> {
-  const { data, error } = await supabase.from("questions_public").select("id");
-  if (error || !data || data.length === 0) throw new Error("No questions available.");
-  const remaining = data.filter((q) => !excludeIds.includes(q.id));
-  const pool = remaining.length > 0 ? remaining : data; // recycle if pool runs out
-  return pool[Math.floor(Math.random() * pool.length)].id;
-}
+type Stage =
+  | { kind: "landing" }
+  | { kind: "pool-browse"; name: string }
+  | { kind: "in-session"; session: Session };
 
 export default function App() {
-  const [session, setSession] = useState<Session | null>(null);
+  const [stage, setStage] = useState<Stage>({ kind: "landing" });
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // A saved in-progress pool game survives a refresh; solo games and the
+  // browse screen are transient and always start fresh.
   useEffect(() => {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (raw) {
       try {
-        setSession(JSON.parse(raw));
+        setStage({ kind: "in-session", session: JSON.parse(raw) });
       } catch {
         localStorage.removeItem(SESSION_STORAGE_KEY);
       }
@@ -32,28 +34,70 @@ export default function App() {
     setLoaded(true);
   }, []);
 
-  function handleJoined(s: Session) {
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(s));
-    setSession(s);
+  function enterSession(session: Session) {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    setStage({ kind: "in-session", session });
   }
 
   function handleLeave() {
     localStorage.removeItem(SESSION_STORAGE_KEY);
-    setSession(null);
+    setStage({ kind: "landing" });
+  }
+
+  async function handleChoose(name: string, mode: "solo" | "pool") {
+    setError(null);
+    if (mode === "pool") {
+      setStage({ kind: "pool-browse", name });
+      return;
+    }
+    try {
+      enterSession(await createSoloSession(name));
+    } catch (e: any) {
+      setError(e.message ?? "Could not start a solo game.");
+    }
   }
 
   if (!loaded) return null;
-  if (!session) return <JoinScreen onJoined={handleJoined} />;
 
-  return <GameShell session={session} onLeave={handleLeave} />;
+  if (stage.kind === "landing") {
+    return (
+      <>
+        <LandingScreen onChoose={handleChoose} />
+        {error && (
+          <p className="error-text" style={{ textAlign: "center", marginTop: -12 }}>
+            {error}
+          </p>
+        )}
+      </>
+    );
+  }
+
+  if (stage.kind === "pool-browse") {
+    return (
+      <OpenPoolsScreen
+        displayName={stage.name}
+        onEntered={enterSession}
+        onBack={() => setStage({ kind: "landing" })}
+      />
+    );
+  }
+
+  return <GameShell session={stage.session} onLeave={handleLeave} />;
 }
 
 function GameShell({ session, onLeave }: { session: Session; onLeave: () => void }) {
   const { pool, players, rounds, currentRound, hostPlayerId } = usePoolState(session.pool);
   const isHost = hostPlayerId === session.player.id;
+  const isSolo = pool.max_players === 1;
   const askedQuestionIds = rounds.map((r) => r.question_id);
 
   async function startGame() {
+    if (rounds.length > 0) {
+      // Round 1 already exists (e.g. a stale session tried to start twice) --
+      // just make sure the pool is marked active instead of inserting again.
+      await supabase.from("pools").update({ status: "active" }).eq("id", pool.id);
+      return;
+    }
     const questionId = await pickNextQuestionId(askedQuestionIds);
     const endsAt = new Date(Date.now() + ROUND_DURATION_SECONDS * 1000).toISOString();
     await supabase.from("rounds").insert({
@@ -92,6 +136,7 @@ function GameShell({ session, onLeave }: { session: Session; onLeave: () => void
         round={currentRound}
         player={session.player}
         isHost={isHost}
+        isSolo={isSolo}
         onAdvance={advanceRound}
         onFinish={finishGame}
       />
