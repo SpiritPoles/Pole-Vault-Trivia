@@ -10,6 +10,7 @@ interface QuestionScreenProps {
   round: Round;
   player: Player;
   isHost: boolean;
+  isSolo: boolean;
   onAdvance: () => Promise<void>;
   onFinish: () => Promise<void>;
 }
@@ -19,6 +20,7 @@ export function QuestionScreen({
   round,
   player,
   isHost,
+  isSolo,
   onAdvance,
   onFinish,
 }: QuestionScreenProps) {
@@ -75,6 +77,20 @@ export function QuestionScreen({
   const isLastRound = round.round_number >= TOTAL_ROUNDS;
   const roundOver = secondsLeft === 0;
 
+  // Solo games have no one to click "Next round" -- advance automatically
+  // after a short pause so the player can see their result first.
+  useEffect(() => {
+    if (!isSolo || !roundOver || advancing) return;
+    setAdvancing(true);
+    const timer = setTimeout(async () => {
+      if (isLastRound) await onFinish();
+      else await onAdvance();
+      setAdvancing(false);
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSolo, roundOver, isLastRound]);
+
   return (
     <div className="screen">
       <div className="card" style={{ maxWidth: 520 }}>
@@ -129,21 +145,29 @@ export function QuestionScreen({
         )}
         {selected && !result && <p style={{ marginTop: 16 }}>Locking in your answer&hellip;</p>}
 
-        <div style={{ marginTop: 24, borderTop: "1px solid var(--line)", paddingTop: 16 }}>
-          <p className="eyebrow" style={{ marginBottom: 8 }}>
-            Standings
-          </p>
-          {rows.slice(0, 5).map((r, i) => (
-            <div key={r.player_id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
-              <span>
-                {i + 1}. {r.display_name}
-              </span>
-              <span>{r.total_points}</span>
-            </div>
-          ))}
-        </div>
+        {!isSolo && (
+          <div style={{ marginTop: 24, borderTop: "1px solid var(--line)", paddingTop: 16 }}>
+            <p className="eyebrow" style={{ marginBottom: 8 }}>
+              Standings
+            </p>
+            {rows.slice(0, 5).map((r, i) => (
+              <div key={r.player_id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                <span>
+                  {i + 1}. {r.display_name}
+                </span>
+                <span>{r.total_points}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {isHost && (
+        {isSolo && roundOver && (
+          <p style={{ marginTop: 20, textAlign: "center" }}>
+            {isLastRound ? "Calculating final score\u2026" : "Next question in a moment\u2026"}
+          </p>
+        )}
+
+        {isHost && !isSolo && (
           <button
             className="btn-primary"
             style={{ width: "100%", marginTop: 20 }}
