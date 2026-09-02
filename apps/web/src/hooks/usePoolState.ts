@@ -7,6 +7,11 @@ export function usePoolState(initialPool: Pool) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [rounds, setRounds] = useState<Round[]>([]);
 
+  const refetchPool = useCallback(async () => {
+    const { data } = await supabase.from("pools").select("*").eq("id", initialPool.id).single();
+    if (data) setPool(data as Pool);
+  }, [initialPool.id]);
+
   const refetchPlayers = useCallback(async () => {
     const { data } = await supabase
       .from("players")
@@ -26,6 +31,7 @@ export function usePoolState(initialPool: Pool) {
   }, [pool.id]);
 
   useEffect(() => {
+    refetchPool();
     refetchPlayers();
     refetchRounds();
 
@@ -51,11 +57,11 @@ export function usePoolState(initialPool: Pool) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [pool.id, refetchPlayers, refetchRounds]);
+  }, [pool.id, refetchPool, refetchPlayers, refetchRounds]);
 
   const currentRound = rounds[rounds.length - 1];
   // The player who joined earliest runs the show -- no separate host flag needed.
   const hostPlayerId = players[0]?.id;
 
-  return { pool, players, rounds, currentRound, hostPlayerId, setPool };
+  return { pool, players, rounds, currentRound, hostPlayerId, setPool, refetchRounds };
 }
