@@ -86,27 +86,31 @@ export default function App() {
 }
 
 function GameShell({ session, onLeave }: { session: Session; onLeave: () => void }) {
-  const { pool, players, rounds, currentRound, hostPlayerId } = usePoolState(session.pool);
+  const { pool, players, rounds, currentRound, hostPlayerId, setPool, refetchRounds } =
+    usePoolState(session.pool);
   const isHost = hostPlayerId === session.player.id;
   const isSolo = pool.max_players === 1;
   const askedQuestionIds = rounds.map((r) => r.question_id);
 
   async function startGame() {
-    if (rounds.length > 0) {
-      // Round 1 already exists (e.g. a stale session tried to start twice) --
-      // just make sure the pool is marked active instead of inserting again.
-      await supabase.from("pools").update({ status: "active" }).eq("id", pool.id);
-      return;
+    if (rounds.length === 0) {
+      const questionId = await pickNextQuestionId(askedQuestionIds);
+      const endsAt = new Date(Date.now() + ROUND_DURATION_SECONDS * 1000).toISOString();
+      await supabase.from("rounds").insert({
+        pool_id: pool.id,
+        question_id: questionId,
+        round_number: 1,
+        ends_at: endsAt,
+      });
+      await refetchRounds();
     }
-    const questionId = await pickNextQuestionId(askedQuestionIds);
-    const endsAt = new Date(Date.now() + ROUND_DURATION_SECONDS * 1000).toISOString();
-    await supabase.from("rounds").insert({
-      pool_id: pool.id,
-      question_id: questionId,
-      round_number: 1,
-      ends_at: endsAt,
-    });
-    await supabase.from("pools").update({ status: "active" }).eq("id", pool.id);
+    const { data } = await supabase
+      .from("pools")
+      .update({ status: "active" })
+      .eq("id", pool.id)
+      .select()
+      .single();
+    if (data) setPool(data as typeof pool);
   }
 
   async function advanceRound() {
@@ -119,10 +123,17 @@ function GameShell({ session, onLeave }: { session: Session; onLeave: () => void
       round_number: currentRound.round_number + 1,
       ends_at: endsAt,
     });
+    await refetchRounds();
   }
 
   async function finishGame() {
-    await supabase.from("pools").update({ status: "finished" }).eq("id", pool.id);
+    const { data } = await supabase
+      .from("pools")
+      .update({ status: "finished" })
+      .eq("id", pool.id)
+      .select()
+      .single();
+    if (data) setPool(data as typeof pool);
   }
 
   if (pool.status === "waiting") {
