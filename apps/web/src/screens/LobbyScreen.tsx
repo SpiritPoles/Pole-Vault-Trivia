@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { supabase } from "../supabaseClient";
+import { minPlayersToStart } from "../constants";
 import type { Player, Pool } from "../types";
 
 interface LobbyScreenProps {
@@ -11,6 +11,8 @@ interface LobbyScreenProps {
 
 export function LobbyScreen({ pool, players, isHost, onStart }: LobbyScreenProps) {
   const [starting, setStarting] = useState(false);
+  const minToStart = minPlayersToStart(pool.max_players);
+  const canStart = players.length >= minToStart;
 
   return (
     <div className="screen">
@@ -19,7 +21,7 @@ export function LobbyScreen({ pool, players, isHost, onStart }: LobbyScreenProps
         <h1 style={{ fontSize: 40, letterSpacing: "0.08em", marginBottom: 20 }}>{pool.code}</h1>
 
         <p style={{ marginBottom: 8, color: "var(--text)" }}>
-          {players.length} {players.length === 1 ? "player" : "players"} in
+          {players.length}/{pool.max_players} players in
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 24 }}>
           {players.map((p, i) => (
@@ -40,37 +42,29 @@ export function LobbyScreen({ pool, players, isHost, onStart }: LobbyScreenProps
         </div>
 
         {isHost ? (
-          <button
-            className="btn-primary"
-            style={{ width: "100%" }}
-            disabled={starting || players.length < 1}
-            onClick={async () => {
-              setStarting(true);
-              await onStart();
-              setStarting(false);
-            }}
-          >
-            {starting ? "Starting..." : "Start game"}
-          </button>
+          <>
+            <button
+              className="btn-primary"
+              style={{ width: "100%" }}
+              disabled={starting || !canStart}
+              onClick={async () => {
+                setStarting(true);
+                await onStart();
+                setStarting(false);
+              }}
+            >
+              {starting ? "Starting..." : "Start game"}
+            </button>
+            {!canStart && (
+              <p style={{ marginTop: 10, fontSize: 13, textAlign: "center" }}>
+                Need at least {minToStart} players to start
+              </p>
+            )}
+          </>
         ) : (
           <p>Waiting for the host to start the round&hellip;</p>
         )}
       </div>
     </div>
   );
-}
-
-export async function createFirstRound(
-  poolId: string,
-  questionId: string,
-  durationSeconds: number
-) {
-  const endsAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
-  await supabase.from("rounds").insert({
-    pool_id: poolId,
-    question_id: questionId,
-    round_number: 1,
-    ends_at: endsAt,
-  });
-  await supabase.from("pools").update({ status: "active" }).eq("id", poolId);
 }
