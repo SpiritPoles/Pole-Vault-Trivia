@@ -3,7 +3,16 @@ export interface Pool {
   code: string;
   name: string;
   status: "waiting" | "active" | "finished";
+  max_players: number;
   created_at: string;
+}
+
+export interface OpenPool {
+  id: string;
+  code: string;
+  max_players: number;
+  created_at: string;
+  player_count: number;
 }
 
 export interface Player {
